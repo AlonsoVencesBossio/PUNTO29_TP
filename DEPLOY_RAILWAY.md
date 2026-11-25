@@ -1,0 +1,44 @@
+# Despliegue en Railway
+
+## Requisitos
+- Conectar el repositorio a Railway.
+- Crear un servicio de PostgreSQL en Railway.
+- Definir las variables de entorno.
+
+## Variables de entorno
+- `SECRET_KEY`: clave larga y privada.
+- `DATABASE_URL`: la entrega Railway Postgres.
+- `FLASK_DEBUG=0` en produccion.
+
+## Arranque
+- El proyecto usa `Procfile` con:
+  - `web: gunicorn app:app`
+- PostgreSQL usa `psycopg[binary]` (version 3). La app normaliza los prefijos
+  `postgres://`, `postgresql://` y `postgresql+psycopg2://` a `postgresql+psycopg://`,
+  conservando usuario, clave, servidor y parametros.
+- `railway.json` configura `/health`: comprueba que la app y la base respondan
+  antes de considerar saludable un despliegue.
+- Si aparece `ModuleNotFoundError: No module named 'psycopg'`, comprobar que
+  Railway construya el ultimo commit de `main`; repetir el despliegue de una
+  version anterior puede reutilizar dependencias que no incluyen ese controlador.
+
+## Comportamiento al iniciar
+- La app crea las tablas si la base esta vacia.
+- La app siembra los datos esenciales iniciales cuando encuentra la base vacia.
+- Si no hay sedes, crea solo `Almacen` para la configuracion inicial. Si ya hay sedes, conserva las registradas y no agrega `Sede_17` ni `Sede_20` al reiniciar o desplegar.
+- Las sedes se guardan en la base indicada por `DATABASE_URL`, no en GitHub. Las sedes de ejemplo creadas por versiones anteriores se pueden eliminar desde Ajustes si no tienen datos asociados.
+- El login usa sesiones persistentes por equipo.
+
+## Archivos que no debes subir
+- `.env`
+- `.venv/`
+- `__pycache__/`
+- `cookies.txt`
+
+## Pasos recomendados
+1. Subir el proyecto a GitHub.
+2. Conectar Railway al repositorio.
+3. Agregar PostgreSQL.
+4. Copiar `DATABASE_URL` a las variables del servicio web.
+5. Definir `SECRET_KEY`.
+6. Desplegar.
