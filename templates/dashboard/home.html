@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Panel principal</h1>
+<p>Bienvenido, {{ current_user.username }}. Este panel cambia segun tu rol.</p>
+
+<div class="grid-2">
+    <div class="logo-box">Productos: {{ stats.productos }}</div>
+    <div class="logo-box">Movimientos: {{ stats.movimientos }}</div>
+    <div class="logo-box">Pedidos: {{ stats.pedidos }}</div>
+    <div class="logo-box">Arqueos: {{ stats.arqueos }}</div>
+</div>
+{% if current_user.can_view('cupones') %}
+<section class="card mt-3">
+    <h3>🎟️ Validador de cupones</h3>
+    <p class="muted">Lee un vale de consumo, consulta su estado y confirma el canje.</p>
+    <a class="btn-outline" href="{{ url_for('cupones') }}">Abrir validador</a>
+</section>
+{% endif %}
+
+<section class="card mt-3 attention-card">
+    <h3>Atencion requerida</h3>
+    <p class="muted">{{ alerts.subtitle }}</p>
+    <div class="attention-grid">
+        {% for card in alerts.cards %}
+        <article class="attention-item {{ card.state }}">
+            <strong>{{ card.title }}</strong>
+            <p>{{ card.message }}</p>
+            {% if card.link %}
+            <a class="attention-link" href="{{ url_for(card.link) }}">Ir ahora</a>
+            {% endif %}
+        </article>
+        {% else %}
+        <article class="attention-item ok">
+            <strong>Sin pendientes</strong>
+            <p>No hay tareas urgentes para hoy.</p>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+
+<p>Usa el menu lateral para abrir tus vistas permitidas.</p>
+{% endblock %}

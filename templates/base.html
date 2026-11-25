@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#101828">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Punto 29">
+    <title>{% block title %}Sistema{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Orbitron:wght@600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='img/icono.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/icono.png') }}">
+    <link rel="manifest" href="{{ url_for('manifest') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script>
+        window.INVENTORY_AREA_OPTIONS = {{ areas_subareas|tojson if areas_subareas is defined else '{}' }};
+        window.CIERRE_REMINDER = {{ cierre_reminder|default(none)|tojson }};
+        window.CURRENT_ROLE = {{ current_user.rol_nombre|default('')|tojson }};
+        window.CSRF_TOKEN = {{ csrf_token()|tojson }};
+        window.CURRENT_USER = {{ current_user.id_usuario|tojson }};
+        window.OPERATION_DATE = {{ today_value|tojson }};
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/operational.css') }}">
+    <script defer src="{{ url_for('static', filename='js/local-first.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='js/inventario.js') }}"></script>
+</head>
+<body>
+    <div id="sync-status" role="status" aria-live="polite"></div>
+    <div id="toast-region" role="status" aria-live="polite"></div>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Punto 29 Logo">
+            </div>
+            <a class="user-card profile-card-link" href="{{ url_for('perfil') }}" title="Ver mi perfil">
+                <div class="avatar">U</div>
+                <div class="user-name">{{ current_user.username }}</div>
+                <div class="user-role">{{ current_user.rol_nombre }}</div>
+                <div class="user-meta">{{ current_user.sede.nombre_sede if current_user.sede else 'Sin sede' }}</div>
+                <div class="user-meta">{{ current_user.turno_nombre if current_user.turno_nombre else 'Sin turno' }}</div>
+            </a>
+
+            <nav class="menu">
+                {% for view, label in allowed_views %}
+                    {% if view == 'dashboard' %}
+                        <a href="{{ url_for('dashboard') }}">{{ label }}</a>
+                    {% elif view == 'inventario' %}
+                        <a href="{{ url_for('inventario') }}">{{ label }}</a>
+                    {% elif view == 'inventario_dashboard' %}
+                        <a href="{{ url_for('inventario_dashboard') }}">{{ label }}</a>
+                    {% elif view == 'movimientos' %}
+                        <a href="{{ url_for('movimientos') }}">{{ label }}</a>
+                    {% elif view == 'pedidos' %}
+                        <a href="{{ url_for('pedidos') }}">{{ label }}</a>
+                    {% elif view == 'checklist' %}
+                        <a href="{{ url_for('checklist') }}">{{ label }}</a>
+                    {% elif view == 'arqueo' %}
+                        <a href="{{ url_for('arqueo') }}">{{ label }}</a>
+                    {% elif view == 'mermas' %}
+                        <a href="{{ url_for('mermas') }}">{{ label }}</a>
+                    {% elif view == 'incidencias' %}
+                        <a href="{{ url_for('incidencias') }}">{{ label }}</a>
+                    {% elif view == 'cupones' %}
+                        <a href="{{ url_for('cupones') }}">🎟️ {{ label }}</a>
+                    {% elif view == 'horarios' %}
+                        <a href="{{ url_for('horarios') }}">📅 {{ label }}</a>
+                    {% elif view == 'ajustes' %}
+                        <a href="{{ url_for('ajustes') }}">{{ label }}</a>
+                    {% endif %}
+                {% endfor %}
+            </nav>
+            <footer class="sidebar-footer">
+                <a class="logout" href="{{ url_for('logout') }}">Cerrar sesion</a>
+                <small class="app-version" aria-label="Versión del sistema">Versión {{ app_version }}</small>
+            </footer>
+        </aside>
+        <button id="mobile-menu-btn" class="mobile-menu-btn" type="button" aria-label="Abrir menu">
+            <span></span><span></span><span></span>
+        </button>
+        <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Cerrar menu"></button>
+
+        <main class="content">
+            <header class="topbar">
+                <div class="logo-box">
+                    <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Punto 29 Logo">
+                </div>
+                <form class="date-box-form" method="POST" action="{{ url_for('set_app_date') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input class="date-box" type="date" id="app-date-input" name="app_date" value="{{ today_value }}" aria-label="Fecha de operación" onchange="this.form.submit()">
+                </form>
+            </header>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <section class="alerts">
+                        {% for category, message in messages %}
+                            <div class="alert {{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </section>
+                {% endif %}
+            {% endwith %}
+
+            <section class="panel">
+                {% block content %}{% endblock %}
+            </section>
+        </main>
+    </div>
+    <script>
+        (function () {
+            var sidebar = document.querySelector('.sidebar');
+            var menuBtn = document.getElementById('mobile-menu-btn');
+            var backdrop = document.getElementById('sidebar-backdrop');
+            if (!sidebar || !menuBtn || !backdrop) {
+                return;
+            }
+
+            function closeMenu() {
+                sidebar.classList.remove('is-open');
+                backdrop.classList.remove('is-open');
+                document.body.classList.remove('menu-open');
+            }
+
+            function toggleMenu() {
+                var open = sidebar.classList.toggle('is-open');
+                backdrop.classList.toggle('is-open', open);
+                document.body.classList.toggle('menu-open', open);
+            }
+
+            menuBtn.addEventListener('click', toggleMenu);
+            backdrop.addEventListener('click', closeMenu);
+            window.addEventListener('resize', function () {
+                if (window.innerWidth > 900) {
+                    closeMenu();
+                }
+            });
+        })();
+    </script>
+    <script>
+        (function () {
+            var container = document.querySelector('.alerts');
+            if (!container) {
+                return;
+            }
+
+            var alerts = container.querySelectorAll('.alert');
+            if (!alerts.length) {
+                return;
+            }
+
+            function removeAlert(alertEl) {
+                alertEl.classList.add('is-leaving');
+                window.setTimeout(function () {
+                    if (alertEl && alertEl.parentNode) {
+                        alertEl.parentNode.removeChild(alertEl);
+                    }
+                    if (!container.children.length && container.parentNode) {
+                        container.parentNode.removeChild(container);
+                    }
+                }, 220);
+            }
+
+            for (var i = 0; i < alerts.length; i += 1) {
+                (function (alertEl, index) {
+                    window.setTimeout(function () {
+                        removeAlert(alertEl);
+                    }, 5000 + index * 120);
+                })(alerts[i], i);
+            }
+        })();
+    </script>
+    <script>
+        (function () {
+            if (!('serviceWorker' in navigator)) {
+                return;
+            }
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('{{ url_for('service_worker') }}?v=20261015-1').then(function (registration) {
+                    registration.update();
+                    if (registration.waiting) {
+                        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                    registration.addEventListener('updatefound', function () {
+                        var worker = registration.installing;
+                        if (!worker) {
+                            return;
+                        }
+                        worker.addEventListener('statechange', function () {
+                            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+                                worker.postMessage({ type: 'SKIP_WAITING' });
+                            }
+                        });
+                    });
+                    navigator.serviceWorker.addEventListener('controllerchange', function () {
+                        window.location.reload();
+                    });
+                }).catch(function () {
+                    // Registro silencioso: si falla, la app sigue funcionando como web normal.
+                });
+            });
+        })();
+    </script>
+    <script>
+        (function () {
+            if (window.CURRENT_ROLE !== 'admin_sala' || !('Notification' in window)) {
+                return;
+            }
+
+            var permissionKey = 'p29-notification-permission-requested';
+            if (!sessionStorage.getItem(permissionKey) && Notification.permission === 'default') {
+                Notification.requestPermission().finally(function () {
+                    sessionStorage.setItem(permissionKey, '1');
+                });
+            }
+
+            var reminder = window.CIERRE_REMINDER;
+            if (!reminder || !('serviceWorker' in navigator)) {
+                return;
+            }
+
+            function checkReminder() {
+                if (Notification.permission !== 'granted') return;
+                var now = new Date();
+                var currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+                var todayKey = 'p29-reminder-' + now.toISOString().slice(0, 10) + '-' + reminder.sede + '-' + reminder.turno;
+                if (currentTime === reminder.time && !localStorage.getItem(todayKey)) {
+                    navigator.serviceWorker.ready.then(function (registration) {
+                        registration.showNotification('Recordatorio de Cierre de Caja', {
+                            body: 'Es hora de iniciar el registro y cierre de caja de tu turno.',
+                            icon: '{{ url_for('static', filename='img/icono.png') }}',
+                            tag: todayKey,
+                            data: { url: '{{ url_for('arqueo') }}' }
+                        });
+                        localStorage.setItem(todayKey, '1');
+                    });
+                }
+            }
+            checkReminder();
+            window.setInterval(checkReminder, 30000);
+        })();
+    </script>
+</body>
+</html>

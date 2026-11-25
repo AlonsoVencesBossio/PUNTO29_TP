@@ -1,0 +1,60 @@
+{% extends 'base.html' %}
+{% block title %}Validador de cupones{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/cupones.css') }}">
+<script defer src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script defer src="{{ url_for('static', filename='js/cupones.js') }}"></script>
+
+<header class="coupon-heading">
+    <div><p class="eyebrow">🎟️ Operaciones</p><h1>Validador de cupones</h1><p class="muted">Genera, registra, consulta y confirma vales de consumo.</p></div>
+    <a class="btn-outline" href="{{ url_for('coupon_export') }}">Exportar CSV</a>
+</header>
+<div class="coupon-stats">
+    <div class="card coupon-stat"><strong>{{ counts.disponibles }}</strong><span>Registrados disponibles</span><small>Algunos pueden estar vencidos o fuera del horario permitido.</small></div>
+    <div class="card coupon-stat"><strong>{{ counts.utilizados }}</strong><span>Utilizados</span></div>
+    <div class="card coupon-stat"><strong>{{ counts.anulados }}</strong><span>Anulados</span></div>
+</div>
+<div id="coupon-message" class="coupon-message" role="status" aria-live="polite"></div>
+<div class="coupon-columns">
+    <section class="card coupon-reader">
+        <h2>Leer y canjear</h2>
+        <p class="muted">Incluye el código de barras completo y enfocado. La lectura es automática.</p>
+        <div class="coupon-scan-actions">
+            <button type="button" id="coupon-image-button">Cargar imagen</button>
+            <button type="button" id="coupon-camera-button">Cámara</button>
+            <input id="coupon-image-input" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        </div>
+        <div id="coupon-preview" class="coupon-preview">Sin imagen ni cámara activa.</div>
+        <video id="coupon-video" class="coupon-video" autoplay muted playsinline hidden></video>
+        <form id="coupon-lookup-form" class="coupon-lookup">
+            <label for="coupon-code">Código del cupón</label>
+            <div class="coupon-inline"><input id="coupon-code" maxlength="100" autocomplete="off" placeholder="Escribe o pega el código"><button type="submit">Consultar</button></div>
+        </form>
+        <article id="coupon-result" class="coupon-result" hidden>
+            <h3>Resultado</h3><dl><div><dt>Código</dt><dd data-field="codigo"></dd></div><div><dt>Monto</dt><dd data-field="monto"></dd></div><div><dt>Vencimiento</dt><dd data-field="fecha_vencimiento"></dd></div><div><dt>Estado</dt><dd data-field="estado"></dd></div><div data-used-details><dt>Canjeado por</dt><dd data-field="utilizado_por"></dd><dt>Fecha de canje</dt><dd data-field="utilizado_en"></dd></div></dl>
+            <button type="button" id="coupon-redeem-button" hidden>Confirmar canje (marcar como usado)</button>
+        </article>
+    </section>
+    <section class="card coupon-admin">
+        <h2>Administrar cupones</h2>
+        <div class="coupon-tabs" role="tablist"><button type="button" class="is-active" data-tab="generate">Generar cupones</button><button type="button" data-tab="register">Registrar impresos</button></div>
+        <form id="coupon-generate-form" data-panel="generate">
+            <label>Monto<select name="monto"><option value="20">S/ 20</option><option value="50">S/ 50</option><option value="100">S/ 100</option></select></label>
+            <label>Cantidad<input name="cantidad" type="number" min="1" max="200" value="1" required></label>
+            <label>Fecha de vencimiento<input name="fecha_vencimiento" type="date" min="{{ today }}" value="{{ today }}" required></label>
+            <button type="submit">Generar</button>
+        </form>
+        <form id="coupon-register-form" data-panel="register" hidden>
+            <label>Código exacto<input name="codigo" maxlength="100" required></label>
+            <label>Monto<select name="monto"><option value="20">S/ 20</option><option value="50">S/ 50</option><option value="100">S/ 100</option></select></label>
+            <label>Fecha de vencimiento<input name="fecha_vencimiento" type="date" min="{{ today }}" value="{{ today }}" required></label>
+            <button type="submit">Registrar cupón impreso</button>
+        </form>
+        <div id="coupon-generated" class="coupon-generated"></div>
+    </section>
+</div>
+<section class="card coupon-history"><div class="module-heading"><div><h2>Últimos 200 cupones</h2><p class="muted">El estado efectivo considera vencimiento y días permitidos.</p></div></div>
+<div class="inventory-table-wrap"><table class="inventory-table"><thead><tr><th>Código</th><th>Valor</th><th>Vencimiento</th><th>Estado actual</th><th>Usuario y fecha de utilización</th></tr></thead><tbody>
+{% for coupon in coupons %}<tr><td>{{ coupon.codigo }}</td><td>S/ {{ coupon.monto }}</td><td>{{ coupon.fecha_vencimiento.strftime('%d/%m/%Y') }}</td><td><span class="coupon-status {{ _coupon_status(coupon) }}">{{ _coupon_status(coupon)|replace('_', ' ')|title }}</span></td><td>{% if coupon.utilizado_por %}{{ coupon.utilizado_por }} · {{ coupon.utilizado_en|peru_datetime }}{% else %}—{% endif %}</td></tr>{% else %}<tr><td colspan="5">No hay cupones registrados.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}
