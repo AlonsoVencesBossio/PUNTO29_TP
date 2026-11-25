@@ -1,0 +1,340 @@
+import json
+import os
+import re
+import subprocess
+import unittest
+from datetime import date, datetime
+from pathlib import Path
+from unittest.mock import patch
+
+from database import db, Rol, Sede, Turno, Usuario, ArqueoCaja
+
+
+class TestArqueoAdmin(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with patch.dict(os.environ, DATABASE_URL='sqlite:///:memory:', SECRET_KEY='test-arqueo'):
+            from app import create_app
+            cls.app = create_app()
+        cls.app.config['TESTING'] = True
+        cls.template = (Path(__file__).resolve().parents[1] / 'templates/dashboard/arqueo_caja.html').read_text(encoding='utf-8')
+
+    def setUp(self):
+        with self.app.app_context():
+            db.drop_all()
+            db.create_all()
+            db.session.add_all([
+                Rol(id_rol=1, nombre_rol='admin_general'), Rol(id_rol=2, nombre_rol='admin_sala'),
+                Sede(id_sede=1, nombre_sede='Almacen'), Sede(id_sede=2, nombre_sede='Restaurante'),
+                Turno(id_turno='NA', nombre_turno='N/A'), Turno(id_turno='NOCHE', nombre_turno='Noche'),
+            ])
+            db.session.flush()
+            db.session.add_all([
+                Usuario(id_usuario='general', username='general', password_hash='unused', id_rol=1, id_sede=1, id_turno='NA'),
+                Usuario(id_usuario='sala', username='sala', password_hash='unused', id_rol=2, id_sede=2, id_turno='NOCHE'),
+            ])
+            db.session.commit()
+        self.general = self.client_for('general')
+        self.sala = self.client_for('sala')
+
+    def client_for(self, user):
+        client = self.app.test_client()
+        with client.session_transaction() as session:
+            session.update(_user_id=user, _fresh=True, _csrf_token='test-token', app_date='2026-09-16')
+        return client
+
+    def save(self, client, url, fields):
+        response = client.post(url, json={'fields': fields, 'event': 'GUARDADO_MANUAL'}, headers={'X-CSRFToken': 'test-token'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json['ok'])
+        return response.json
+
+    def test_admin_saves_rendered_url_to_same_closure_and_history(self):
+        initial = self.save(self.sala, '/arqueo', {
+            'monto_inicial': '100', 'pos_tarjetas': '200', 'yape': '30', 'plin': '40',
+            'efectivo': '500', 'venta_sistema': '670', 'efectivo_entregado': '400',
+            'efectivo_dejado_caja_real': '100', 'observaciones': 'Cierre sala',
+            'gastos': [{'id': 'g1', 'tipo': 'Comida', 'nombre': 'Cena', 'monto': '20'}],
+        })
+        url = '/arqueo?sede=2&turno=NOCHE'
+        page = self.general.get(url).get_data(as_text=True)
+        # Usar la URL literal que recibe JavaScript: dentro de script NO se decodifica &amp;.
+        literal = re.search(r'return fetch\((.+?), \{', page).group(1)
+        fetch_url = json.loads(literal) if literal.startswith('"') else literal[1:-1]
+        edited = self.save(self.general, fetch_url, {
+            'monto_inicial': '90', 'pos_tarjetas': '210', 'yape': '31', 'plin': '41',
+            'efectivo': '510', 'venta_sistema': '702', 'efectivo_entregado': '410',
+            'efectivo_dejado_caja_real': '95', 'observaciones': '', 'gastos': [],
+        })
+        with self.app.app_context():
+            self.assertEqual(ArqueoCaja.query.count(), 1, 'El administrador creo otro cierre/turno')
+            cierre = ArqueoCaja.query.one()
+            self.assertEqual((cierre.id_sede, cierre.id_turno, cierre.id_usuario), (2, 'NOCHE', 'sala'))
+            for name, value in dict(monto_inicial=90, pos_tarjetas=210, yape=31, plin=41,
+                                    efectivo=510, venta_sistema=702, efectivo_entregado=410,
+                                    efectivo_dejado_caja_real=95).items():
+                self.assertEqual(getattr(cierre, name), value, name)
+            self.assertEqual(cierre.observaciones, '')
+            self.assertEqual(json.loads(cierre.gastos_json), [])
+        self.assertTrue({log['id'] for log in initial['logs']} <= {log['id'] for log in edited['logs']})
+        self.assertEqual({log['usuario_id'] for log in edited['logs']}, {'general', 'sala'})
+        general_page = self.general.get(url).get_data(as_text=True)
+        sala_page = self.sala.get('/arqueo').get_data(as_text=True)
+        for page in (general_page, sala_page):
+            self.assertRegex(page, r'name="pos_tarjetas" value="210\.00"')
+            self.assertRegex(page, r'name="efectivo_dejado_caja_real" value="95\.00"')
+        def history(page):
+            return re.search(r'<tbody id="historial-auditoria-body">(.*?)</tbody>', page, re.S).group(1)
+        self.assertEqual(history(general_page), history(sala_page))
+        # Sala conserva sus restricciones incluso despues de la correccion del administrador.
+        self.save(self.sala, '/arqueo', {'pos_tarjetas': '999', 'efectivo_dejado_caja_real': '999'})
+        with self.app.app_context():
+            self.assertEqual(ArqueoCaja.query.one().pos_tarjetas, 210)
+            self.assertEqual(ArqueoCaja.query.one().efectivo_dejado_caja_real, 95)
+
+    def run_js(self, script):
+        result = subprocess.run(['node', '-'], input=script, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_past_closure_without_lock_metadata_shows_same_values_for_both_roles(self):
+        values = dict(monto_inicial=100, pos_tarjetas=200, yape=0, plin=40,
+                      efectivo=500, venta_sistema=660, efectivo_entregado=400,
+                      efectivo_dejado_caja_real=100)
+        with self.app.app_context():
+            db.session.add(ArqueoCaja(
+                id_sede=2, id_turno='NOCHE', id_usuario='sala', fecha=date(2026, 9, 15),
+                campos_bloqueados_json='[]', venta_sistema_guardada=False,
+                efectivo_entregado_guardado=False, efectivo_dejado_guardado=False,
+                gastos_json=json.dumps([dict(id='g1', tipo='Comida', nombre='Cena', monto=20, bloqueado=True)]),
+                **values,
+            ))
+            db.session.commit()
+        for client in (self.general, self.sala):
+            with client.session_transaction() as session:
+                session['app_date'] = '2026-09-15'
+            with patch('app._get_operation_date', return_value=datetime(2026, 9, 16)):
+                page = client.get('/arqueo?sede=2&turno=NOCHE').get_data(as_text=True)
+            for name, value in values.items():
+                self.assertIn(f'name="{name}" value="{value:.2f}"', page, name)
+            self.assertIn('id="sum-total-ingresos">740.00</span>', page)
+            self.assertIn('name="gasto_nombre[]" value="Cena"', page)
+        # Consultar el historico no modifica montos ni marcas de bloqueo/guardado.
+        with self.app.app_context():
+            cierre = ArqueoCaja.query.one()
+            self.assertEqual(cierre.campos_bloqueados_json, '[]')
+            self.assertFalse(cierre.venta_sistema_guardada)
+            self.assertFalse(cierre.efectivo_entregado_guardado)
+            self.assertFalse(cierre.efectivo_dejado_guardado)
+            for name, value in values.items():
+                self.assertEqual(getattr(cierre, name), value)
+
+    def test_current_partial_closure_keeps_unsaved_sala_inputs_empty(self):
+        self.save(self.sala, '/arqueo', {'pos_tarjetas': '200'})
+        with patch('app._get_operation_date', return_value=datetime(2026, 9, 16)):
+            page = self.sala.get('/arqueo').get_data(as_text=True)
+        self.assertIn('name="pos_tarjetas" value="200.00"', page)
+        for name in ('monto_inicial', 'yape', 'plin', 'efectivo', 'venta_sistema',
+                     'efectivo_entregado', 'efectivo_dejado_caja_real'):
+            self.assertIn(f'name="{name}" value=""', page, name)
+
+    def test_past_date_without_closure_keeps_inputs_empty(self):
+        with self.sala.session_transaction() as session:
+            session['app_date'] = '2026-09-15'
+        with patch('app._get_operation_date', return_value=datetime(2026, 9, 16)):
+            page = self.sala.get('/arqueo').get_data(as_text=True)
+        self.assertIn('name="pos_tarjetas" value=""', page)
+        with self.app.app_context():
+            self.assertEqual(ArqueoCaja.query.count(), 0)
+
+    def test_cash_sections_respect_each_role_at_every_stage(self):
+        function = self.template.split('function lockSavedFields(fields) {', 1)[1].split('function updateGastosState', 1)[0]
+        self.run_js("""
+            const assert = require('node:assert/strict');
+            let isAdminGeneral, auditEnabled, efectivoEntregadoGuardado, efectivoDejadoGuardado;
+            let ventaSistemaGuardada = false, lockedFields = new Set();
+            const delivered = {disabled: false}, left = {disabled: false};
+            const list = {querySelectorAll: () => []}, addBtn = {};
+            function setFieldLocked(name) { lockedFields.add(name); }
+            function section(element) {
+                return {closest: () => ({closest: () => null, querySelectorAll: () => [element]})};
+            }
+            const document = {
+                querySelectorAll: () => [],
+                querySelector: selector => section(selector.includes('efectivo_entregado') ? delivered : left)
+            };
+            function lockSavedFields(fields) {""" + function + """
+            for (const admin of [false, true]) {
+                for (const audit of [false, true]) {
+                    for (const given of [false, true]) {
+                        for (const closed of [false, true]) {
+                            for (const locked of [false, true]) {
+                                isAdminGeneral = admin; auditEnabled = audit;
+                                efectivoEntregadoGuardado = given; efectivoDejadoGuardado = closed;
+                                lockedFields = new Set(locked ? ['efectivo_entregado'] : []);
+                                lockSavedFields([]);
+                                const state = JSON.stringify({admin, audit, given, closed, locked});
+                                assert.equal(delivered.disabled, !admin && (!audit || locked), state);
+                                assert.equal(left.disabled, !admin && (!given || closed), state);
+                            }
+                        }
+                    }
+                }
+            }
+        """)
+
+    def test_admin_can_send_empty_observations_without_changing_sala(self):
+        function = self.template.split('function collectChangedFields() {', 1)[1].split('function saveChanged', 1)[0]
+        self.run_js("""
+            const assert = require('node:assert/strict');
+            let isAdminGeneral = true;
+            const dirtyFields = new Set(['observaciones']);
+            const document = {querySelector: () => ({value: '', disabled: false})};
+            function collectChangedFields() {""" + function + """
+            assert.deepEqual(collectChangedFields(), {observaciones: ''});
+            isAdminGeneral = false;
+            assert.deepEqual(collectChangedFields(), {});
+        """)
+
+    def autosave(self, fields, client=None, url='/arqueo'):
+        response = (client or self.sala).post(url, json={'fields': fields, 'event': 'AUTOGUARDADO_5MIN'},
+                                             headers={'X-CSRFToken': 'test-token'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json['ok'])
+        return response.json
+
+    def test_autosave_keeps_amounts_editable_until_manual_save(self):
+        first = self.autosave({'pos_tarjetas': '1', 'venta_sistema': '2'})
+        self.assertEqual(first['locked_fields'], [])
+        self.assertFalse(first['venta_sistema_guardada'])
+        self.assertFalse(first['audit_enabled'])
+        self.autosave({'pos_tarjetas': '125.50', 'venta_sistema': '250'})
+        with patch('app._get_operation_date', return_value=datetime(2026, 9, 16)):
+            page = self.sala.get('/arqueo').get_data(as_text=True)
+        self.assertIn('name="pos_tarjetas" value="125.50"', page)
+        self.assertIn('name="venta_sistema" value="250.00"', page)
+        drafts = re.search(r'var dirtyFields = new Set\((\[.*?\])\)', page).group(1)
+        self.assertEqual(set(json.loads(drafts)), {'pos_tarjetas', 'venta_sistema'})
+        saved = self.save(self.sala, '/arqueo', {'pos_tarjetas': '125.50', 'venta_sistema': '250'})
+        self.assertIn('pos_tarjetas', saved['locked_fields'])
+        self.assertTrue(saved['audit_enabled'])
+
+    def test_expense_name_does_not_lock_before_amount_is_entered(self):
+        expense = {'id': 'draft-expense', 'tipo': 'Comida', 'nombre': 'Cena', 'monto': ''}
+        for save in (self.autosave, lambda fields: self.save(self.sala, '/arqueo', fields)):
+            saved = save({'gastos': [expense]})
+            self.assertFalse(saved['gastos'][0]['bloqueado'])
+            self.assertIsNone(saved['gastos'][0]['monto'])
+        page = self.sala.get('/arqueo').get_data(as_text=True)
+        self.assertIn('name="gasto_monto[]" value=""', page)
+        expense['monto'] = '19.50'
+        saved = self.autosave({'gastos': [expense]})
+        self.assertEqual(saved['gastos'][0]['monto'], 19.50)
+        self.assertFalse(saved['gastos'][0]['bloqueado'])
+        saved = self.save(self.sala, '/arqueo', {'gastos': [expense]})
+        self.assertTrue(saved['gastos'][0]['bloqueado'])
+
+    def test_autosave_does_not_confirm_cash_delivery_or_close_cash(self):
+        self.save(self.sala, '/arqueo', {'efectivo': '200', 'venta_sistema': '200'})
+        saved = self.autosave({'efectivo_entregado': '1'})
+        self.assertFalse(saved['efectivo_entregado_guardado'])
+        self.assertNotIn('efectivo_entregado', saved['locked_fields'])
+        self.save(self.sala, '/arqueo', {'efectivo_entregado': '150'})
+        saved = self.autosave({'efectivo_dejado_caja_real': '5'})
+        self.assertFalse(saved['closure_complete'])
+        self.assertFalse(saved['efectivo_dejado_guardado'])
+        saved = self.save(self.sala, '/arqueo', {'efectivo_dejado_caja_real': '50'})
+        self.assertTrue(saved['closure_complete'])
+
+    def test_draft_expense_can_be_removed_but_confirmed_expense_is_preserved(self):
+        confirmed = {'id': 'confirmed', 'tipo': 'Comida', 'nombre': 'Cena', 'monto': '20'}
+        self.save(self.sala, '/arqueo', {'gastos': [confirmed]})
+        draft = {'id': 'draft', 'tipo': 'Otros', 'nombre': 'En proceso', 'monto': ''}
+        self.autosave({'gastos': [confirmed, draft]})
+        saved = self.autosave({'gastos': []})
+        self.assertEqual([g['id'] for g in saved['gastos']], ['confirmed'])
+        self.assertTrue(saved['gastos'][0]['bloqueado'])
+
+    def test_autosave_does_not_change_confirmed_amounts_or_tips(self):
+        tip = {'id': 'tip', 'tipo': 'Propina', 'nombre': 'Propina', 'monto': '10'}
+        self.save(self.sala, '/arqueo', {'pos_tarjetas': '100', 'gastos': [tip]})
+        tip['monto'] = '150'
+        saved = self.autosave({'pos_tarjetas': '999', 'gastos': [tip]})
+        self.assertEqual(saved['gastos'][0]['monto'], 10)
+        with self.app.app_context():
+            self.assertEqual(ArqueoCaja.query.one().pos_tarjetas, 100)
+        tip['monto'] = '15'
+        saved = self.save(self.sala, '/arqueo', {'gastos': [tip]})
+        self.assertEqual(saved['gastos'][0]['monto'], 15)
+
+    def test_admin_autosave_preserves_expense_confirmation(self):
+        expense = {'id': 'confirmed', 'tipo': 'Comida', 'nombre': 'Cena', 'monto': '20'}
+        self.save(self.sala, '/arqueo', {'gastos': [expense]})
+        saved = self.autosave({'gastos': [expense]}, client=self.general, url='/arqueo?sede=2&turno=NOCHE')
+        self.assertTrue(saved['gastos'][0]['bloqueado'])
+
+    def test_typing_schedules_five_minute_draft_without_saving_on_focus(self):
+        body = self.template.split('function markDirty(name) {', 1)[1].split("document.querySelectorAll('input, select, textarea')", 1)[0]
+        self.run_js("""
+            const assert = require('node:assert/strict');
+            let dirtyFields = new Set(), lockedFields = new Set(), isAdminGeneral = false;
+            let autosaveTimer, dirtyRevision = 0, delay, callback, eventName;
+            function clearTimeout() {}
+            function setTimeout(fn, milliseconds) { callback = fn; delay = milliseconds; return 1; }
+            function saveChanged(event) { eventName = event; }
+            function markDirty(name) {""" + body + """
+            markDirty('gastos');
+            assert.equal(delay, 300000);
+            assert.equal(dirtyRevision, 1);
+            assert(dirtyFields.has('gastos'));
+            assert.equal(eventName, undefined);
+            callback();
+            assert.equal(eventName, 'AUTOGUARDADO_5MIN');
+        """)
+        self.assertNotIn("addEventListener('focus', function () { markDirty", self.template)
+
+    def test_late_autosave_response_preserves_changes_typed_while_saving(self):
+        body = self.template.split('function saveChanged(eventName) {', 1)[1].split('function markDirty(name)', 1)[0]
+        body = re.sub(r'\{\{ url_for\("arqueo".*?\}\}', '"/arqueo"', body)
+        self.run_js("""
+            const assert = require('node:assert/strict');
+            let dirtyFields = new Set(['gastos']), dirtyRevision = 1, saveInProgress = false;
+            let autosaveTimer, isAdminGeneral = true, ventaSistemaGuardada, auditEnabled;
+            let efectivoEntregadoGuardado, efectivoDejadoGuardado, release;
+            const saveBtn = {disabled: false};
+            function clearTimeout() {}
+            function collectChangedFields() { return {gastos: [{id: 'g1', nombre: 'Cena', monto: '1'}]}; }
+            function setStatus() {}
+            function lockSavedFields() {}
+            function updateGastosState() {}
+            function renderHistorial() {}
+            function updateSummary() {}
+            function showSuccessToast() {}
+            function fetch() { return new Promise(resolve => { release = resolve; }); }
+            function saveChanged(eventName) {""" + body + """
+            (async () => {
+                let saving = saveChanged('AUTOGUARDADO_5MIN');
+                assert.equal(saveInProgress, true);
+                dirtyFields.add('pos_tarjetas'); dirtyRevision++;
+                release({ok: true, json: async () => ({ok: true, locked_fields: [], gastos: []})});
+                await saving;
+                assert(dirtyFields.has('pos_tarjetas'));
+                assert(dirtyFields.has('gastos'));
+                assert.equal(saveInProgress, false);
+                saving = saveChanged('GUARDADO_MANUAL');
+                release({ok: true, json: async () => ({ok: true, locked_fields: [], gastos: []})});
+                await saving;
+                assert.equal(dirtyFields.size, 0);
+                assert.equal(saveBtn.disabled, false);
+            })().catch(error => { console.error(error); process.exitCode = 1; });
+        """)
+
+    def test_rendered_javascript_syntax_for_both_roles(self):
+        for client in (self.general, self.sala):
+            page = client.get('/arqueo?sede=2&turno=NOCHE').get_data(as_text=True)
+            for script in re.findall(r'<script>(.*?)</script>', page, re.S):
+                result = subprocess.run(['node', '--check', '-'], input=script, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+
+if __name__ == '__main__':
+    unittest.main()
