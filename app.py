@@ -364,13 +364,13 @@ def _safe_json_list(value):
 		return []
 
 
-def _stats_for_user(user):
+def _stats_for_user(user, selected_date):
 	try:
 		stats = {
 			'productos': Producto.query.count(),
-			'movimientos': MovimientoInventario.query.count(),
-			'pedidos': ChecklistPedido.query.count(),
-			'arqueos': ArqueoCaja.query.count(),
+			'movimientos': MovimientoInventario.query.filter(db.func.date(MovimientoInventario.fecha) == selected_date).count(),
+			'pedidos': ChecklistPedido.query.filter(db.func.date(ChecklistPedido.fecha) == selected_date).count(),
+			'arqueos': ArqueoCaja.query.filter(ArqueoCaja.fecha == selected_date).count(),
 		}
 		return stats
 	except Exception:
@@ -1960,7 +1960,7 @@ def create_app():
 	def dashboard():
 		selected_date = _get_selected_app_date()
 		try:
-			stats = _stats_for_user(current_user)
+			stats = _stats_for_user(current_user, selected_date)
 			alerts = _home_alerts_for_user(current_user, selected_date)
 		except Exception:
 			stats = {'productos': 0, 'movimientos': 0, 'pedidos': 0, 'arqueos': 0}
@@ -1969,7 +1969,7 @@ def create_app():
 			'dashboard/home.html',
 			allowed_views=_allowed_views(current_user),
 			stats=stats,
-			alerts=alerts,
+			alerts=alerts, selected_date=selected_date,
 		)
 
 	@app.route('/cupones')
@@ -4391,14 +4391,14 @@ def create_app():
 			'values': [round(total_pos, 2), round(total_digital, 2), round(total_efectivo, 2)],
 		}
 
-		trend_start = selected_date - timedelta(days=6)
+		trend_start = selected_date
 		trend_labels = [
 			(trend_start + timedelta(days=i)).strftime('%d/%m')
-			for i in range(7)
+			for i in range(1)
 		]
 		trend_lookup = [
 			(trend_start + timedelta(days=i)).strftime('%Y-%m-%d')
-			for i in range(7)
+			for i in range(1)
 		]
 
 		trend_query = db.session.query(ArqueoCaja, Sede).outerjoin(
@@ -4482,10 +4482,10 @@ def create_app():
 				'gap_venta': _safe_float(reference['arqueo'].venta_sistema, 0.0) - _safe_float(target['arqueo'].venta_sistema, 0.0),
 			})
 
-		week_start = selected_date - timedelta(days=selected_date.weekday())
-		month_start = selected_date.replace(day=1)
+		
+		
 
-		period_query = ArqueoCaja.query.filter(ArqueoCaja.fecha >= month_start, ArqueoCaja.fecha <= selected_date)
+		period_query = ArqueoCaja.query.filter(ArqueoCaja.fecha == selected_date)
 		if not is_admin_general:
 			period_query = period_query.filter(
 				ArqueoCaja.id_sede == current_user.id_sede,
@@ -4493,10 +4493,10 @@ def create_app():
 			)
 		period_rows = period_query.all()
 
-		week_ganancia = 0.0
-		week_gastos = 0.0
-		month_ganancia = 0.0
-		month_gastos = 0.0
+		day_ganancia = 0.0
+		day_gastos = 0.0
+		
+		
 
 		for arqueo in period_rows:
 			total_ingresos_item = (
@@ -4511,17 +4511,17 @@ def create_app():
 				gastos_item = 0.0
 			ganancia_item = _safe_float(arqueo.monto_final, 0.0) - _safe_float(arqueo.monto_inicial, 0.0)
 
-			if arqueo.fecha and arqueo.fecha >= week_start:
-				week_ganancia += ganancia_item
-				week_gastos += gastos_item
+			if arqueo.fecha == selected_date:
+				day_ganancia += ganancia_item
+				day_gastos += gastos_item
 
-			month_ganancia += ganancia_item
-			month_gastos += gastos_item
+			
+			
 
 		chart_ganancia_gastos = {
-			'labels': ['Semana actual', 'Mes actual'],
-			'ganancia': [round(week_ganancia, 2), round(month_ganancia, 2)],
-			'gastos': [round(week_gastos, 2), round(month_gastos, 2)],
+			'labels': [selected_date.strftime('%d/%m/%Y')],
+			'ganancia': [round(day_ganancia, 2)],
+			'gastos': [round(day_gastos, 2)],
 		}
 
 		return render_template(
@@ -4561,7 +4561,7 @@ def create_app():
 
 	def _arqueo_period_params(args, user):
 		today = _get_selected_app_date()
-		period = (args.get('period') or 'month').strip()
+		period = (args.get('period') or 'day').strip()
 		start_raw = (args.get('date_start') or '').strip()
 		end_raw = (args.get('date_end') or '').strip()
 		try:
@@ -4578,7 +4578,7 @@ def create_app():
 				date_end = first - timedelta(days=1)
 				date_start = date_end.replace(day=1)
 			else:
-				date_start = today.replace(day=1)
+				date_start = today.replace(day=1) if period == 'month' else today
 				date_end = today
 		return date_start, date_end
 
