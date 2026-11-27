@@ -201,3 +201,36 @@ class OperationalRegression(unittest.TestCase):
                 self.assertIn('15/10/2026 12:30',text)
                 self.assertIn('Prueba de acceso',text)
                 if owner != 'general': self.assertNotIn('Otra sede',text)
+    def test_dashboard_activity_counts_use_selected_operational_day(self):
+
+        from database import MovimientoInventario
+
+        with self.app.app_context():
+            db.session.add_all([
+                ChecklistPedido(id_pedido=2, id_sede=2, id_turno='NA', id_usuario='chef', fecha=datetime(2026, 10, 14), estado_general='Finalizado'),
+                MovimientoInventario(id_sede=1, id_producto='P1', id_usuario='warehouse', cantidad=1, tipo='ENTRADA', motivo='Dia seleccionado', fecha=datetime(2026, 10, 15, 17, 30)),
+                MovimientoInventario(id_sede=1, id_producto='P1', id_usuario='warehouse', cantidad=1, tipo='ENTRADA', motivo='Dia anterior', fecha=datetime(2026, 10, 14, 17, 30)),
+            ])
+            db.session.commit()
+
+        save_today = self.general.post('/arqueo?sede=1&turno=NA', json={'fields': {'monto_inicial': '100'}}, headers={'X-CSRFToken': 'token'})
+        self.assertEqual(save_today.status_code, 200)
+        previous_day = self.client('general')
+        with previous_day.session_transaction() as session:
+            session['app_date'] = '2026-10-14'
+        save_previous_day = previous_day.post('/arqueo?sede=1&turno=NA', json={'fields': {'monto_inicial': '100'}}, headers={'X-CSRFToken': 'token'})
+        self.assertEqual(save_previous_day.status_code, 200)
+
+        report = self.general.get('/arqueo/dashboard/data')
+        self.assertEqual(report.status_code, 200)
+        self.assertEqual(report.json['date_start'], '2026-10-15')
+        self.assertEqual(report.json['date_end'], '2026-10-15')
+        self.assertEqual(len(report.json['items']), 1)
+        response = self.general.get('/dashboard')
+        self.assertEqual(response.status_code, 200)
+        text = response.get_data(as_text=True)
+        self.assertIn('Fecha operativa: 15/10/2026', text)
+        self.assertIn('Productos en catálogo: 2', text)
+        self.assertIn('Movimientos del día: 1', text)
+        self.assertIn('Pedidos del día: 1', text)
+        self.assertIn('Arqueos del día: 1', text)
