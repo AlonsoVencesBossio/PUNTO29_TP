@@ -11,7 +11,7 @@
 </div>
 
 <form method="GET" action="{{ url_for('arqueo_export_report') }}" class="inline-form" style="margin-top:8px;">
-	<div><label>Período</label><select name="period"><option value="week">Semana actual</option><option value="month" selected>Mes actual</option><option value="last_month">Último mes</option><option value="custom">Personalizado</option></select></div>
+	<div><label>Período</label><select name="period"><option value="day" selected>Día seleccionado</option><option value="week">Semana actual</option><option value="month">Mes actual</option><option value="last_month">Último mes</option><option value="custom">Personalizado</option></select></div>
 	<div><label>Desde</label><input type="date" name="date_start"></div>
 	<div><label>Hasta</label><input type="date" name="date_end"></div>
 	{% if is_admin_general %}<div><label>Sede</label><select name="sede"><option value="">Todas</option>{% for s in sedes_disponibles %}<option value="{{ s.id_sede }}">{{ s.nombre_sede }}</option>{% endfor %}</select></div>{% endif %}
