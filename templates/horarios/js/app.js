@@ -1914,7 +1914,7 @@ function cargarOpcionesTrabajador() {
     const area = document.querySelector("#workerArea");
     const cargos = document.querySelector("#workerPosition");
     if (sede) sede.innerHTML = `<option value="">Seleccionar sede</option>` + obtenerSedes().filter(item => item.estado === "activo").map(item => `<option value="${item.id}">${item.nombre}</option>`).join("");
-    if (turno) turno.innerHTML = `<option value="">Seleccionar turno</option>` + obtenerTurnos().filter(item => item.estado === "activo").map(item => `<option value="${item.id}">${item.nombre}</option>`).join("");
+    if (turno) turno.innerHTML = `<option value="">Seleccionar turno</option>` + obtenerTurnos().filter(item => String(item.estado || "").trim().toLowerCase() === "activo").map(item => `<option value="${item.id}">${item.nombre}</option>`).join("");
     if (area) area.innerHTML = `<option value="">Seleccionar área</option>` + obtenerColeccion("areas").filter(item => item.estado === "activo").map(item => `<option value="${item.id}">${item.nombre}</option>`).join("");
     if (cargos) {
         document.querySelector("#workerPositionOptions").innerHTML = obtenerColeccion("cargos").filter(item => item.estado === "activo").map(item => `<option value="${item.nombre}">`).join("");
