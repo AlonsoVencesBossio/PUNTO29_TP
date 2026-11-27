@@ -106,14 +106,11 @@ def register_operations(app, csrf_token):
         if not current_user.is_global_admin:
             abort(403)
         error = None
-       if request.method == 'POST':
+        if request.method == 'POST':
             action = request.form.get('action')
             name = request.form.get('nombre', '').strip().lower()
             if action == 'role':
-                error = 'El sistema está configurado para trabajar únicamente con los 3 roles definidos.'
-            elif action in {'area', 'area_roles'}:
-                else:
-                    db.session.add(Rol(nombre_rol=name))
+                error = 'El sistema está configurado para trabajar únicamente con los 3 roles definidos.'           
             elif action in {'area', 'area_roles'}:
                 sede = db.session.get(Sede, request.form.get('id_sede', type=int))
                 if not sede:
