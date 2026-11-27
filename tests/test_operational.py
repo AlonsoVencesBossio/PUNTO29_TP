@@ -102,8 +102,8 @@ class OperationalRegression(unittest.TestCase):
 
     def test_permission_matrix_and_area_assignment(self):
         self.assertEqual(self.general.get('/admin/permisos').status_code,200)
-        self.assertEqual(self.post(self.general,'/admin/permisos',dict(action='role',nombre='Supervisor')).status_code,200)
-        with self.app.app_context(): role_id = Rol.query.filter_by(nombre_rol='supervisor').one().id_rol
+        self.assertIn('los 3 roles definidos', self.post(self.general,'/admin/permisos',dict(action='role',nombre='Supervisor')).get_data(as_text=True))
+        with self.app.app_context(): role_id = Rol.query.filter_by(nombre_rol='cocinero').one().id_rol; self.assertEqual(Rol.query.count(), 3)
         self.assertEqual(self.post(self.general,'/admin/permisos',dict(action='matrix',id_rol=str(role_id),checklist_write='on')).status_code,200)
         self.post(self.general,'/admin/permisos',dict(action='area',id_sede='2',nombre='Preparación'))
         with self.app.app_context():
