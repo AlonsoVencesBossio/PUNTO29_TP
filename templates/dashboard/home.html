@@ -2,13 +2,13 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 <h1>Panel principal</h1>
-<p>Bienvenido, {{ current_user.username }}. Este panel cambia segun tu rol.</p>
+<p>Bienvenido, {{ current_user.username }}. Este panel cambia segun tu rol.</p><p class="muted">Fecha operativa: {{ selected_date.strftime('%d/%m/%Y') }}</p>
 
 <div class="grid-2">
-    <div class="logo-box">Productos: {{ stats.productos }}</div>
-    <div class="logo-box">Movimientos: {{ stats.movimientos }}</div>
-    <div class="logo-box">Pedidos: {{ stats.pedidos }}</div>
-    <div class="logo-box">Arqueos: {{ stats.arqueos }}</div>
+    <div class="logo-box">Productos en catálogo: {{ stats.productos }}</div>
+    <div class="logo-box">Movimientos del día: {{ stats.movimientos }}</div>
+    <div class="logo-box">Pedidos del día: {{ stats.pedidos }}</div>
+    <div class="logo-box">Arqueos del día: {{ stats.arqueos }}</div>
 </div>
 {% if current_user.can_view('cupones') %}
 <section class="card mt-3">
